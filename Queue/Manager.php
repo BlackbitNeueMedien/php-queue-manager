@@ -383,7 +383,7 @@ class Manager
                 $stmt = $db->prepare($sql);
                 $stmt->execute(['queue_id' => $qid]);
                 
-                while ($data = $stmt->fetch()) {
+                while ($data = $stmt->fetch(\PDO::FETCH_ASSOC)) {
                     $data['handle'] = md5(uniqid(rand(), true));
                     
                     $sql = "UPDATE " . $this->messageTable . "
