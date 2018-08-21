@@ -397,9 +397,9 @@ class Manager
                     
                     $db->beginTransaction();
                     $inputArr = [
-                        ':handle'  => $data['handle'],
-                        ':id'      => $data['message_id'],
-                        ':timeout' => $microtime,
+                        'handle'  => $data['handle'],
+                        'id'      => $data['message_id'],
+                        'timeout' => $microtime,
                     ];
                     
                     $updated = $stmt->execute($inputArr);
