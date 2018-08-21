@@ -99,66 +99,20 @@ class Manager
      * @param int $max
      * @param int $timeout
      * @throws Exception
-     * @return \ArrayObject
+     * @return \Generator
      */
     private function receiveQueueMessages(Queue $queue, $max, $timeout)
     {
-        $messages      = array();
-        $microtime = microtime(true); // cache microtime
-        $db        = $this->getDb();
-        $qid       = $this->getQueueId($queue->getName());
-        
-        // start transaction handling
-        try {
-            if ( $max > 0 ) {
-                $db->beginTransaction();
-
-                $sql = "SELECT *
-                        FROM " . $this->messageTable . "
-                        WHERE queue_id = :queue_id
-                        AND (handle IS NULL OR timeout+" . (int)$timeout . " < " . (int)$microtime .")
-                        LIMIT ".$max;
-                $stmt = $db->prepare($sql);
-                $stmt->execute(array('queue_id'=>$qid));
-
-                foreach ($stmt->fetchAll() as $data) {
-                    $data['handle'] = md5(uniqid(rand(), true));
-
-                    $sql = "UPDATE " . $this->messageTable . "
-                            SET
-                                handle = :handle,
-                                timeout = :timeout
-                            WHERE
-                                message_id = :id
-                                AND (handle IS NULL OR timeout+" . (int)$timeout . " < " . (int)$microtime.")";
-
-                    $stmt = $db->prepare($sql);
-                    $stmt->bindParam(':handle', $data['handle'], \PDO::PARAM_STR);
-                    $stmt->bindParam(':id', $data['message_id'], \PDO::PARAM_STR);
-                    $stmt->bindValue(':timeout', $microtime);
-                    $updated = $stmt->execute();
-                    
-                    if ($updated) {
-                        $messages[] = $data;
-                    }
-                }
-                $db->commit();
-            }
-        } catch (\Exception $e) {
-            $db->rollBack();
-            throw $e;
-        }
-        
-        $m = array();
+        $messages = $this->fetchMessages($queue, $max, $timeout);
+    
         foreach($messages as $msg) {
             $message = unserialize(base64_decode($msg['body']));
             if($message instanceof Message) {
                 $message->message_id = $msg['message_id'];
-                $m[] = $message;
+                yield $message;
             }
         }
-
-        return new \ArrayObject($m);
+        
     }
     
     /**
@@ -400,5 +354,61 @@ class Manager
         $stmt = $this->getDb()->prepare($sql);
         $stmt->execute();
         return $stmt->fetchColumn();
+    }
+    
+    /**
+     * @param Queue $queue
+     * @param       $max
+     * @param       $timeout
+     *
+     * @return array
+     * @throws Exception
+     */
+    private function fetchMessages(Queue $queue, $max, $timeout)
+    {
+        $microtime = microtime(true); // cache microtime
+        $db = $this->getDb();
+        $qid = $this->getQueueId($queue->getName());
+        
+        // start transaction handling
+        try {
+            if ($max > 0) {
+                $db->beginTransaction();
+                
+                $sql = "SELECT *
+                        FROM " . $this->messageTable . "
+                        WHERE queue_id = :queue_id
+                        AND (handle IS NULL OR timeout+" . (int)$timeout . " < " . (int)$microtime . ")
+                        LIMIT " . $max;
+                $stmt = $db->prepare($sql);
+                $stmt->execute(['queue_id' => $qid]);
+                
+                while ($data = $stmt->fetch()) {
+                    $data['handle'] = md5(uniqid(rand(), true));
+                    
+                    $sql = "UPDATE " . $this->messageTable . "
+                            SET
+                                handle = :handle,
+                                timeout = :timeout
+                            WHERE
+                                message_id = :id
+                                AND (handle IS NULL OR timeout+" . (int)$timeout . " < " . (int)$microtime . ")";
+                    
+                    $stmt = $db->prepare($sql);
+                    $stmt->bindParam(':handle', $data['handle'], \PDO::PARAM_STR);
+                    $stmt->bindParam(':id', $data['message_id'], \PDO::PARAM_STR);
+                    $stmt->bindValue(':timeout', $microtime);
+                    $updated = $stmt->execute();
+                    
+                    if ($updated) {
+                        yield $data;
+                    }
+                }
+                $db->commit();
+            }
+        } catch (\Exception $e) {
+            $db->rollBack();
+            throw $e;
+        }
     }
 }
