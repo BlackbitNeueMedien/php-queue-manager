@@ -371,48 +371,43 @@ class Manager
         $qid = $this->getQueueId($queue->getName());
         
         // start transaction handling
-        try {
-            if ($max > 0) {
-                
-                $sql = "SELECT *
-                        FROM " . $this->messageTable . "
-                        WHERE queue_id = :queue_id
-                        AND (handle IS NULL OR timeout+" . (int)$timeout . " < " . (int)$microtime . ")
-                        LIMIT " . $max;
-                $stmt = $db->prepare($sql);
-                $stmt->execute(['queue_id' => $qid]);
-                
-                $sql = "UPDATE " . $this->messageTable . "
-                        SET
-                            handle = :handle,
-                            timeout = :timeout
-                        WHERE
-                            message_id = :id
-                            AND (handle IS NULL OR timeout+" . (int)$timeout . " < " . (int)$microtime . ")";
-                
-                $stmt = $db->prepare($sql);
-                
-                foreach ($stmt->fetchAll() as $data) {
-                    $data['handle'] = md5(uniqid(rand(), true));
-                    
-                    $db->beginTransaction();
-                    $inputArr = [
-                        'handle'  => $data['handle'],
-                        'id'      => $data['message_id'],
-                        'timeout' => $microtime,
-                    ];
-                    
-                    $updated = $stmt->execute($inputArr);
-                    $db->commit();
-                    
-                    if ($updated) {
-                        yield $data;
-                    }
-                }
+        if ($max > 0) {
+            
+            $sql = "
+                SELECT * FROM " . $this->messageTable . "
+                WHERE `queue_id` = :queue_id
+                AND (`handle` IS NULL OR `timeout` + " . (int) $timeout . " < " . (int) $microtime . ")
+                LIMIT " . $max . "
+            ";
+            
+            $stmt = $db->prepare($sql);
+            $stmt->execute(['queue_id' => $qid]);
+            
+            // UPDATE STATEMENT WITH TRANSACTION
+            $db->beginTransaction();
+            $sql = "
+                UPDATE " . $this->messageTable . "
+                    SET
+                        `handle` = :handle,
+                        `timeout` = :timeout
+                    WHERE 1
+                    AND (`handle` IS NULL OR `timeout` + " . (int) $timeout . " < " . (int) $microtime . ")
+                    LIMIT " . $max . "
+            ";
+            $updateStmt = $db->prepare($sql);
+            
+            $d['handle'] = md5(uniqid(rand(), true));
+            $inputArr = [
+                'handle'  => $d['handle'],
+                'timeout' => $microtime,
+            ];
+            $updateStmt->execute($inputArr);
+            $db->commit();
+            // END - UPDATE STATEMENT WITH TRANSACTION
+            
+            foreach ($stmt->fetchAll() as $data) {
+                yield $data;
             }
-        } catch (\Exception $e) {
-            $db->rollBack();
-            throw $e;
         }
     }
 }
