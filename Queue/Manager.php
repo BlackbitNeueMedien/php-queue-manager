@@ -373,7 +373,6 @@ class Manager
         // start transaction handling
         try {
             if ($max > 0) {
-                $db->beginTransaction();
                 
                 $sql = "SELECT *
                         FROM " . $this->messageTable . "
@@ -383,28 +382,33 @@ class Manager
                 $stmt = $db->prepare($sql);
                 $stmt->execute(['queue_id' => $qid]);
                 
-                while ($data = $stmt->fetch(\PDO::FETCH_ASSOC)) {
+                $sql = "UPDATE " . $this->messageTable . "
+                        SET
+                            handle = :handle,
+                            timeout = :timeout
+                        WHERE
+                            message_id = :id
+                            AND (handle IS NULL OR timeout+" . (int)$timeout . " < " . (int)$microtime . ")";
+                
+                $stmt = $db->prepare($sql);
+                
+                foreach ($stmt->fetchAll() as $data) {
                     $data['handle'] = md5(uniqid(rand(), true));
                     
-                    $sql = "UPDATE " . $this->messageTable . "
-                            SET
-                                handle = :handle,
-                                timeout = :timeout
-                            WHERE
-                                message_id = :id
-                                AND (handle IS NULL OR timeout+" . (int)$timeout . " < " . (int)$microtime . ")";
+                    $db->beginTransaction();
+                    $inputArr = [
+                        ':handle'  => $data['handle'],
+                        ':id'      => $data['message_id'],
+                        ':timeout' => $microtime,
+                    ];
                     
-                    $stmt = $db->prepare($sql);
-                    $stmt->bindParam(':handle', $data['handle'], \PDO::PARAM_STR);
-                    $stmt->bindParam(':id', $data['message_id'], \PDO::PARAM_STR);
-                    $stmt->bindValue(':timeout', $microtime);
-                    $updated = $stmt->execute();
+                    $updated = $stmt->execute($inputArr);
+                    $db->commit();
                     
                     if ($updated) {
                         yield $data;
                     }
                 }
-                $db->commit();
             }
         } catch (\Exception $e) {
             $db->rollBack();
